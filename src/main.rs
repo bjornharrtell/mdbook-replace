@@ -1,7 +1,4 @@
-use mdbook_preprocessor::book::{Book, BookItem};
-use mdbook_preprocessor::config::Config;
-use mdbook_preprocessor::{Preprocessor, PreprocessorContext, parse_input};
-use std::collections::HashMap;
+use mdbook::{Config, preprocess::{Preprocessor, PreprocessorContext, CmdPreprocessor}};
 
 #[derive(Debug)]
 struct Replacement {
@@ -16,7 +13,7 @@ struct Replacer {
 impl Replacer {
     fn new(ctx: &PreprocessorContext) -> Self {
         Self {
-            list: get_replace_table(&ctx.config),
+            list: get_replace_table(&ctx.config).unwrap_or_default(),
         }
     }
 }
@@ -29,10 +26,10 @@ impl Preprocessor for Replacer {
     fn run(
         &self,
         _ctx: &PreprocessorContext,
-        mut book: Book,
-    ) -> mdbook_preprocessor::errors::Result<Book> {
+        mut book: mdbook::book::Book,
+    ) -> mdbook::errors::Result<mdbook::book::Book> {
         book.for_each_mut(|item| {
-            if let BookItem::Chapter(chap) = item {
+            if let mdbook::book::BookItem::Chapter(chap) = item {
                 for replacement in &self.list {
                     chap.content = chap.content.replace(&replacement.from, &replacement.to);
                 }
@@ -42,23 +39,25 @@ impl Preprocessor for Replacer {
         Ok(book)
     }
 
-    fn supports_renderer(&self, _renderer: &str) -> mdbook_preprocessor::errors::Result<bool> {
-        Ok(true)
+    fn supports_renderer(&self, _renderer: &str) -> bool {
+        true
     }
 }
 
-fn get_replace_table(config: &Config) -> Vec<Replacement> {
-    let Ok(Some(table)) = config.get::<HashMap<String, String>>("preprocessor.replace.list") else {
-        return Vec::new();
-    };
+fn get_replace_table(config: &Config) -> Option<Vec<Replacement>> {
+    let preprocessor_config = config.get("preprocessor")?;
+    let replace_config = preprocessor_config.get("replace")?;
+    let table = replace_config.get("list")?;
 
-    table
-        .into_iter()
+    Some(
+        table.as_table()
+            .unwrap()
+            .iter()
         .map(|(key, value)| Replacement {
-            from: key,
-            to: value,
+            from: key.clone(),
+            to: String::from(value.as_str().unwrap()),
         })
-        .collect()
+        .collect(),)
 }
 
 fn main() -> anyhow::Result<()> {
@@ -66,7 +65,7 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let (ctx, book) = parse_input(std::io::stdin())?;
+    let (ctx, book) = CmdPreprocessor::parse_input(std::io::stdin())?;
     let book = Replacer::new(&ctx).run(&ctx, book)?;
     serde_json::to_writer(std::io::stdout(), &book)?;
     Ok(())
